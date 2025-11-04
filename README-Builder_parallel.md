@@ -1,52 +1,57 @@
-# UniversalBuilder - README Completo
+UniversalBuilder - README (v2.3) 
+🚀 Overview 
+bluider_parallel.py is a Python script that enables the compilation and execution of code in C++, Java, Rust, Python, and compiles C++ modules into Python via PyBind11. It is designed to work seamlessly from Jupyter Notebooks, VS Code, or any Python script.
 
-## 🚀 Panoramica
+✨ Key Features 
+🎯 Multi-language: C++, Java, Rust, Python. 
+🐍 Native C++ Bindings: Compiles C++ files directly into Python modules (.pyd/.so) using PyBind11. 
+🚀 Native Parallelization: Compiles C++, Java, and Rust in parallel. 
+💾 Smart Caching: Hash-based, skips recompilation if files have not changed. 
+📊 Built-in Profiling: Measures compilation and execution time (where applicable). 
+🎨 Jupyter Drag-and-Drop: Drag files into the notebook, build_from_file recognizes them. 
+📁 Multi-file: Automatically groups files of the same language (C++ and Java). 
+🐍 Virtual Environment: Native support for specifying a Python venv. 
+🔄 Automatic Recognition: Detects the file extension and uses the correct compiler.
 
-**UniversalBuilder** è uno script python che consente la compilazione di codice in **C++, Java, Rust, Python** direttamente da Jupyter Notebook, VS Code o script Python, è integrato del wrapper pybind11.
 
-### ✨ Caratteristiche Principali
+📦 Ideal Use Case For using multiple languages (Python, C++, Rust, Java), compiling, testing, and executing everything from a single notebook and/or Python script.
 
-- 🎯 **Multi-linguaggio**: C++, Java, Rust, Python.
-- 🚀 **Parallelizzazione nativa**: Compila **C++, Java, Rust, Python**
-- 💾 **Caching intelligente**: Hash-based, salta ricompilazione
-- 📊 **Profiling integrato**: Misura tempo compilazione/esecuzione
-- 🎨 **Drag-and-drop Jupyter**: Trascinare file e funziona
-- 📁 **Multi-file**: Raggruppa automaticamente file dello stesso linguaggio
-- 🐍 **Virtual Environment**: Supporto Python venv nativo
-- 🔄 **Riconoscimento automatico**: Detected estensione file automaticamente
+Python
 
-### 📦 Caso d'uso ideale
-
-Per usare **molteplici linguaggi** (Python, C++, Rust, Java), compilare e testare tutto **da un unico notebook e/o script Python**.
-
-```python
-# Una sola linea per compilare 4 linguaggi!
+# A single line to compile 3 languages and run 1 script!
 builder.build_and_run_mixed([
     'algorithm.cpp',
     'DataProcessor.java',
     'optimizer.rs',
     'analysis.py'
 ])
-```
 
----
+# Compile a high-performance C++ module for Python
+builder.build_from_file('fast_module.cpp', pybind=True)
 
-## 🔧 Installazione
+# ...then use it directly!
+import fast_module
+print(fast_module.somma(10, 20))
 
-### Prerequisiti
 
-```bash
+🔧 Installation Prerequisites
+
+Bash
+
 # Python 3.7+
 python --version
-pybind11
 
-# Uno o più compilatori:
+# PyBind11 (Required for module compilation)
+pip install pybind11
+
+# One or more compilers:
 
 # C++ (Linux/macOS)
 g++ --version
+# (May require 'python3-dev' or similar: sudo apt install python3-dev)
 
 # C++ (Windows)
-# Installa: Visual Studio Build Tools o Community Edition
+# Install: Visual Studio Build Tools or Community Edition
 # https://visualstudio.microsoft.com/downloads/
 
 # Java
@@ -54,76 +59,71 @@ javac -version
 
 # Rust
 rustc --version
-```
+Setup Download the file
 
-### Setup
+Bash
 
-1. **Scarica il file**
-```bash
-# Copia builder-parallel.py nella tua directory
-cp builder-parallel.py ./
-```
+# Copy UniversalBuilder.py into your directory
+# (renamed from builder-parallel.py for clarity)
+cp UniversalBuilder.py ./
+Import the module
 
-2. **Importa il modulo**
-```python
-from builder_parallel import UniversalBuilder
+Python
 
-# Verifica disponibilità compilatori
+from UniversalBuilder import UniversalBuilder
+
+# Check compiler availability
 UniversalBuilder.check_toolchain()
-```
+Compile files
 
-3. **Compila i file**
-```python
+Python
+
 builder = UniversalBuilder()
 builder.build_and_run_mixed(['main.cpp', 'Main.java'])
-```
 
----
 
-## 💡 Utilizzo Dettagliato
+💡 Detailed Usage
+Basic Configuration
 
-### 1. Configurazione Base
+Python
 
-```python
-# Setup minimalista (usa defaults)
+# Minimal setup (uses defaults)
 builder = UniversalBuilder()
 
-# Setup completo
+# Full setup
 builder = UniversalBuilder(
-    verbose=True,                  # Stampa dettagli
-    cache_enabled=True,            # Abilita caching
-    cache_dir=".builder_cache",    # Dove salvare cache
-    python_venv_path='.venv',      # Path al virtual environment
-    parallel_enabled=True,         # Abilita parallelizzazione
-    max_workers=None               # Auto-detect CPU (8 se 8 core)
+    verbose=True,               # Print details
+    cache_enabled=True,         # Enable caching
+    cache_dir=".builder_cache", # Where to save cache
+    python_venv_path='.venv',   # Path to the virtual environment (used for Python and PyBind11)
+    parallel_enabled=True,      # Enable parallelization
+    max_workers=None            # Auto-detect CPU (e.g., 8 if 8 cores)
 )
-```
+Compiling Multi-file C++ (Executable)
 
-### 2. Compilare C++ Multi-file
+Python
 
-```python
-# File singolo
+# Single file
 builder.build_and_run_cpp('main.cpp')
 
 # Multi-file
 builder.build_and_run_cpp([
     'src/main.cpp',
     'src/algorithms.cpp',
-    'src/utils.cc',      # Estensioni diverse supportate
+    'src/utils.cc',       # Different extensions supported
     'src/io.cxx'
 ])
 
-# Con nome eseguibile personalizzato
+# With custom executable name
 builder.build_and_run_cpp(['main.cpp', 'utils.cpp'], exe_name='myapp')
 
-# Con profiling (misura tempo)
+# With profiling (measure time)
 builder.build_and_run_cpp(['main.cpp'], profile=True)
+Compiling Multi-file Java
 
+Python
 
-### 3. Compilare Java Multi-file
-
-```python
-# File singolo
+# Single file
 builder.build_and_run_java('HelloWorld.java')
 
 # Multi-file
@@ -132,56 +132,35 @@ builder.build_and_run_java([
     'Database.java',
     'Utils.java'
 ])
+# ⚠️ NOTE: 'main' class name must match the first file
+Compiling Rust
 
-# Con profiling
-builder.build_and_run_java(['Main.java', 'Utils.java'], profile=True)
+Python
 
-# ⚠️ NOTA: Nome classe deve corrispondere al nome file
-#    File: HelloWorld.java → public class HelloWorld { ... }
-```
-
-### 4. Compilare Rust
-
-```python
-# Release (veloce, ma lento da compilare)
+# Release (fast to run, but slow to compile)
 builder.build_and_run_rust('main.rs', optimization='release')
 
-# Debug (veloce da compilare)
+# Debug (fast to compile)
 builder.build_and_run_rust('main.rs', optimization='debug')
+Running Python
 
-# Con nome personalizzato
-builder.build_and_run_rust('main.rs', exe_name='myprogram', optimization='release')
+Python
 
-# Con profiling
-builder.build_and_run_rust('main.rs', optimization='release', profile=True)
-```
-
-### 5. Eseguire Python
-
-```python
-# Script singolo
+# Single script (uses the configured venv!)
 builder.build_and_run_python('script.py')
 
-# Script singolo (usa il venv configurato!)
-builder.build_and_run_python('script.py')
-
-# Con profiling
-builder.build_and_run_python('script.py', profile=True)
-
-# Script che accede a package nel venv
+# Script that accesses packages in the venv
 builder = UniversalBuilder(python_venv_path='.venv')
 builder.build_and_run_python('script.py')
-```
+MIXED Compilation (for Executables)
 
-### 6. Compilazione MIXED
+Python
 
-```python
-# Una sola chiamata per TUTTI i linguaggi
+# A single call to compile and run ALL executables
 builder.build_and_run_mixed([
     # C++ multi-file
     'main.cpp',
     'utils.cpp',
-    'io.cc',
     
     # Java
     'Main.java',
@@ -193,41 +172,69 @@ builder.build_and_run_mixed([
     # Python
     'analysis.py'
 ])
+Compiling a PyBind11 Module This method compiles a C++ file into a Python module (.pyd or .so) but does not run it. The compiled module can be imported by Python.
 
-```
+Python
 
-### 7. Drag-and-Drop (Riconoscimento Automatico)
+# 1. Compile a single C++ file into a Python module
+# The module name will be 'fast_math'
+success = builder.build_from_file(
+    'fast_math.cpp', 
+    pybind=True
+)
 
-```python
-# Il builder rileva automaticamente il linguaggio!
-builder.build_from_file('script.py')       # Esegue con Python
-builder.build_from_file('main.cpp')        # Compila con C++
-builder.build_from_file('Main.java')       # Compila con Java
-builder.build_from_file('main.rs')         # Compila con Rust
+if success:
+    import fast_math
+    print(fast_math.add(5, 10))
 
-```
----
+# 2. Compile multi-file C++ into a module
+# You must specify a name for the module
+success = builder.build_from_file(
+    ['module_main.cpp', 'helper.cpp'], 
+    pybind=True, 
+    module_name='my_custom_module'
+)
 
-## 📚 API Completa
+if success:
+    import my_custom_module
+    my_custom_module.do_something()
+Drag-and-Drop (Automatic Recognition) The build_from_file method is the smartest way to use the builder. It automatically detects what to do based on the extension and flags.
 
-### Metodi Principali
+Python
 
-```python
-# 1. BUILD MISTO
+# Automatically detects language and compiles/runs
+builder.build_from_file('script.py')      # Runs with Python
+builder.build_from_file('main.cpp')       # Compiles and Runs C++
+builder.build_from_file('Main.java')      # Compiles and Runs Java
+builder.build_from_file('main.rs')        # Compiles and Runs Rust
+
+# Special recognition for PyBind11
+# Detects .cpp, but pybind=True tells it to compile a module
+builder.build_from_file(
+    'my_module.cpp', 
+    pybind=True
+)
+
+
+📚 Full API Main Methods
+
+Python
+
+# 1. MIXED BUILD (Executables)
 builder.build_and_run_mixed(
     file_paths: Union[str, List[str]],
     profile: bool = False,
     parallel: Optional[bool] = None
 ) -> bool
 
-# 2. C++ MULTI-FILE
+# 2. C++ EXECUTABLE
 builder.build_and_run_cpp(
     src_files: Union[str, List[str]],
     exe_name: Optional[str] = None,
     profile: bool = False
 ) -> bool
 
-# 3. JAVA MULTI-FILE
+# 3. JAVA
 builder.build_and_run_java(
     src_files: Union[str, List[str]],
     profile: bool = False
@@ -247,147 +254,91 @@ builder.build_and_run_python(
     profile: bool = False
 ) -> bool
 
-# 6. DRAG-AND-DROP (AUTO-DETECTION)
+# 6. PYBIND11 MODULE (Compilation only)
+builder.build_pybind_module(
+    src_files: Union[str, List[str]], 
+    module_name: Optional[str] = None, 
+    profile: bool = False
+) -> Optional[Path] # Returns the path to the module on success
+
+# 7. DRAG-AND-DROP (AUTO-DETECTION)
 builder.build_from_file(
-    file_path: str,
+    file_path: Union[str, List[str]],
     exe_name: Optional[str] = None,
     profile: bool = False,
-    **kwargs
+    **kwargs # To pass 'pybind=True', 'module_name', etc.
 ) -> bool
 
-# 7. UTILITY
-UniversalBuilder.check_toolchain()          # Verifica compilatori
-builder.get_parallel_info()                 # Info parallelizzazione
-builder.get_python_info()                   # Info Python
-builder.get_cache_stats()                   # Info cache
-builder.clear_cache()                       # Pulisci cache
-```
----
+# 8. UTILITIES
+UniversalBuilder.check_toolchain()      # Check compilers
+builder.get_parallel_info()             # Parallelization info
+builder.get_python_info()               # Python info
+builder.get_cache_stats()               # Cache info
+builder.clear_cache()                   # Clear cache
 
-## ⚙️ Configurazione Avanzata
 
-### Setup con Virtual Environment
+⚙️ Advanced Configuration Setup with Virtual Environment The builder will automatically use the specified venv both to run Python scripts (.py) and to find Python and PyBind11 "headers" when compiling modules.
 
-```bash
-# Crea venv
+Bash
+
+# Create venv
 python -m venv .venv
 
-# Attiva (Linux/macOS)
+# Activate (Linux/macOS)
 source .venv/bin/activate
 
-# Attiva (Windows)
+# Activate (Windows)
 .venv\Scripts\activate
 
-# Crea builder che usa questo venv
+# Install pybind11 IN the venv
+pip install pybind11 numpy
+Python
+
+# Create builder that uses this venv
 builder = UniversalBuilder(python_venv_path='.venv')
 
-```
+# This will compile using the .venv includes
+builder.build_from_file('my_module.cpp', pybind=True)
 
-### Configurazione Parallelizzazione
+# This will run the script using the .venv interpreter
+builder.build_from_file('script.py')
+Parallelization Configuration
 
-```python
+Python
+
 import os
 
 # Auto-detect (default)
 builder = UniversalBuilder(max_workers=None)
-# Usa os.cpu_count() (es. 8 se 8 core)
+# Uses os.cpu_count() (e.g., 8 if 8 cores)
 
-# Limita a N worker
+# Limit to N workers
 builder = UniversalBuilder(max_workers=2)
 
-# Disabilita parallelizzazione
+# Disable parallelization
 builder = UniversalBuilder(parallel_enabled=False)
 
-# Per singola chiamata
-builder.build_and_run_mixed(files, parallel=True)   # Forza parallelo
-builder.build_and_run_mixed(files, parallel=False)  # Forza sequenziale
-```
 
-### Configurazione Cache
+🎁 Setup Checklist [ ] Python 3.7+ installed [ ] pip install pybind11 (for C++ -> Python Modules) [ ] g++ or MSVC installed (for C++) [ ] 'python-dev' / Build Tools installed (for PyBind11 headers) [ ] javac installed (for Java) [ ] rustc installed (for Rust) [ ] UniversalBuilder.py in directory [ ] Created venv (optional but recommended) [ ] Check toolchain: UniversalBuilder.check_toolchain() [ ] First build: builder.build_from_file('test.cpp') [ ] First PyBind11 build: builder.build_from_file('test_mod.cpp', pybind=True) Debug:
 
-```python
-# Cache abilitata (default)
-builder = UniversalBuilder(cache_enabled=True)
+Python
 
-# Cache disabilitata
-builder = UniversalBuilder(cache_enabled=False)
-
-# Cache directory personalizzata
-builder = UniversalBuilder(cache_dir="/tmp/my_cache")
-
-# Visualizza statistiche
-stats = builder.get_cache_stats()
-print(f"Cache builds: {stats['num_cached_builds']}")
-print(f"Cache size: {stats['cache_size_mb']:.2f} MB")
-
-# Pulisci cache
-builder.clear_cache()
-```
-
----
-
-## 🎁 Checklist di Setup
-
-```
-[ ] Python 3.7+ installato
-[ ] g++ o MSVC installato (per C++)
-[ ] javac installato (per Java)
-[ ] rustc installato (per Rust)
-[ ] builder-parallel.py nella directory
-[ ] Creato venv (opzionale ma consigliato)
-[ ] Check toolchain: UniversalBuilder.check_toolchain()
-[ ] Primo build: builder.build_from_file('test.cpp')
-
----
-
-### Debug:
-
-```python
-# Attiva verbose mode
+# Enable verbose mode
 builder = UniversalBuilder(verbose=True)
 
-# Vedi tutti i comandi che esegue
-# Vedi stderr dettagliato
-# Vedi output profiling
-```
+# See all commands it runs
+# See detailed stderr
+# See profiling output
+Common Causes of Error: ❌ File not found → Use the correct absolute or relative path. ❌ Missing compiler → Run UniversalBuilder.check_toolchain(). ❌ Python module missing → Install in the venv and point python_venv_path to it. ❌ PyBind11 error 'headers not found' → Ensure pip install pybind11 has been run and that you have python-dev (Linux) or Visual Studio Build Tools (Windows). ❌ ImportError after PyBind11 compilation → Ensure the compiled .pyd/.so is in the same folder as your Python script or in sys.path.
 
-### Comuni Cause di Errore:
 
-1. ❌ File non trovato → Usa path assoluto
-2. ❌ Compilatore mancante → Installa tramite gestore pacchetti
-3. ❌ Java nome classe diverso → Leggi regole Java
-4. ❌ Python module missing → Installa nel venv
-5. ❌ Rust lento → Compila in debug durante sviluppo
+🙏 Credits
+Built with:
+Python standard library
+GCC/Clang/MSVC
+Java compiler
+Rust compiler
+PyBind11
+concurrent.futures
 
----
-
-## 🙏 Crediti
-
-Costruito con:
-- Python standard library
-- GCC/Clang/MSVC
-- Java compiler
-- Rust compiler
-- PyBind11
-- concurrent.futures
-
----
-
-**Versione:** 2.0  
-**Data:** Novembre 2025  
-**Autore:** UniversalBuilder Project  
-**Status:** Production Ready ✅
-
----
-
-## 🚀 Ready to Build?
-
-```python
-from builder_parallel import UniversalBuilder
-
-builder = UniversalBuilder(verbose=True)
-UniversalBuilder.check_toolchain()
-
-# Compila quello che vuoi!
-builder.build_and_run_mixed(['main.cpp', 'Main.java', 'calc.rs'])
-```
+Version: 2.3 (PyBind11 Integration) Date: November 2025 Author: Benito Addonizio
