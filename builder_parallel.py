@@ -29,14 +29,16 @@ class UniversalBuilder:
     - Java: .java
     - Rust: .rs
     - Python: .py
-    - PyBind11: .cpp (con speciale keyword)
+    - PyBind11: .cpp (con keyword speciale)
     
-    VERSIONE: 2.2 - Build From File MIGLIORATO
+    VERSIONE: 2.3 - INTEGRAZIONE PyBind11
     """
     # Configurazione esplicita dei flag del compilatore
     MSVC_CPP_FLAGS = "/O2 /MD /std:c++14 /EHsc"
-    MSVC_PYBIND_FLAGS = "/O2 /MD /std:c++14 /EHsc /LD"
+    # MODIFICATO: Flag specifici per PyBind11 (usa /LD per creare una DLL/pyd)
+    MSVC_PYBIND_FLAGS = "/O2 /MD /std:c++14 /EHsc /LD" 
     GCC_CPP_FLAGS = "-O3 -Wall -std=c++14"
+    # MODIFICATO: Flag specifici per PyBind11 (usa -shared e -fPIC per un .so)
     GCC_PYBIND_FLAGS = "-O3 -Wall -shared -std=c++14 -fPIC"
 
     # Mapping estensioni -> linguaggio
@@ -228,22 +230,27 @@ class UniversalBuilder:
 
     def _get_py_include(self) -> str:
         """Ottiene il percorso di include di Python."""
+        # MODIFICATO: Usa self.python_interpreter per coerenza con il venv
         return subprocess.check_output([
-            sys.executable, '-c',
+            self.python_interpreter, '-c',
             'import sysconfig; print(sysconfig.get_path("include"))'
         ]).decode().strip()
         
     def _get_pybind_include(self) -> str:
         """Ottiene i percorsi di include di PyBind11."""
+        if not PYBIND11_AVAILABLE:
+            raise ImportError("PyBind11 non è installato")
+        # MODIFICATO: Usa self.python_interpreter per coerenza con il venv
         return subprocess.check_output([
-            sys.executable, '-m', 'pybind11', '--includes'
+            self.python_interpreter, '-m', 'pybind11', '--includes'
         ]).decode().strip()
 
     def _get_ext_suffix(self) -> str:
         """Ottiene il suffisso per le estensioni native (.pyd o .so)."""
         try:
+            # MODIFICATO: Usa self.python_interpreter per coerenza con il venv
             return subprocess.check_output([
-                sys.executable, '-c',
+                self.python_interpreter, '-c',
                 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))'
             ]).decode().strip()
         except subprocess.CalledProcessError:
@@ -252,7 +259,7 @@ class UniversalBuilder:
     # ===== METODO PRINCIPALE CON PARALLELIZZAZIONE =====
     
     def build_and_run_mixed(self, file_paths: Union[str, List[str]], 
-                           profile: bool = False, parallel: Optional[bool] = None) -> bool:
+                            profile: bool = False, parallel: Optional[bool] = None) -> bool:
         """
         Compila ed esegue file di estensioni diverse in una singola chiamata.
         Supporta compilazione parallela dei linguaggi!
@@ -260,7 +267,7 @@ class UniversalBuilder:
         Args:
             file_paths: Stringa o lista di file paths (possono essere estensioni diverse)
             profile: Se True, mostra profiling
-            parallel: Se True, compila linguaggi in parallelo. None = usa configurazione predefinita
+            parallel: Se True, compila linguaggi in parallelo. None = usa configurazione predefinito
         
         Returns:
             True se tutto ha successo, False altrimenti
@@ -286,6 +293,10 @@ class UniversalBuilder:
         
         # Decidi se usare parallelizzazione
         use_parallel = parallel if parallel is not None else self.parallel_enabled
+        
+        # NOTA: La compilazione PyBind11 non è supportata in 'mixed' 
+        # perché richiede un flag esplicito (pybind=True) in build_from_file.
+        # 'mixed' è pensato per eseguire eseguibili standard.
         
         if use_parallel and len(files_by_lang) > 1:
             print(f"   Modalità: 🚀 PARALLELA ({self.max_workers} worker)")
@@ -393,6 +404,7 @@ class UniversalBuilder:
         
         return dict(groups)
 
+    # MODIFICATO: `build_from_file` ora accetta **kwargs per PyBind11
     def build_from_file(self, file_path: Union[str, List[str]], exe_name: Optional[str] = None, 
                         profile: bool = False, **kwargs) -> bool:
         """
@@ -404,6 +416,8 @@ class UniversalBuilder:
             exe_name: Nome eseguibile opzionale
             profile: Se True, mostra profiling
             **kwargs: Argomenti aggiuntivi
+                - pybind (bool): Se True, compila C++ come modulo PyBind11.
+                - module_name (str): Nome del modulo PyBind11 (se pybind=True).
         
         Returns:
             True se successo, False altrimenti
@@ -433,18 +447,36 @@ class UniversalBuilder:
         else:
             print(f"📁 File rilevato: {main_file_path.name} ({lang})")
         
+        # NUOVO: Logica di routing per PyBind11
+        pybind_build = kwargs.get('pybind', False)
+        
         if lang == 'cpp':
-            return self.build_and_run_cpp(files_to_compile, exe_name=exe_name, profile=profile)
+            if pybind_build:
+                # È un build PyBind11. Compila solo.
+                module_name = kwargs.get('module_name')
+                # Il metodo restituisce un Path se ha successo, None se fallisce
+                module_path = self.build_pybind_module(
+                    files_to_compile, 
+                    module_name=module_name, 
+                    profile=profile
+                )
+                return module_path is not None
+            else:
+                # È un build C++ standard. Compila ed esegui.
+                return self.build_and_run_cpp(files_to_compile, exe_name=exe_name, profile=profile)
+        
         elif lang == 'java':
             return self.build_and_run_java(files_to_compile, profile=profile)
+        
         elif lang == 'rust':
             optimization = kwargs.get('optimization', 'release')
-            # Per Rust, accetta solo il primo file
             rust_file = files_to_compile[0] if isinstance(files_to_compile, list) else files_to_compile
             return self.build_and_run_rust(rust_file, exe_name=exe_name, 
-                                          optimization=optimization, profile=profile)
+                                           optimization=optimization, profile=profile)
+        
         elif lang == 'python':
             return self.build_and_run_python(files_to_compile, profile=profile)
+        
         else:
             print(f"❌ Tipo di file non supportato: {suffix}")
             return False
@@ -452,8 +484,8 @@ class UniversalBuilder:
     # ===== METODI DI COMPILAZIONE C++ (MULTI-FILE) =====
     
     def build_and_run_cpp(self, src_files: Union[str, List[str]], exe_name: Optional[str] = None, 
-                         profile: bool = False) -> bool:
-        """Compila ed esegue uno o più file C++."""
+                          profile: bool = False) -> bool:
+        """Compila ed esegue uno o più file C++ (come ESEGUIBILE)."""
         
         if isinstance(src_files, str):
             src_files = [src_files]
@@ -525,6 +557,117 @@ class UniversalBuilder:
                 return None
         else:
             return f'g++ {self.GCC_CPP_FLAGS} {src_files} -o "{exe_name}"'
+
+    # ===== NUOVO: METODI DI COMPILAZIONE PYBIND11 =====
+    
+    def build_pybind_module(self, src_files: Union[str, List[str]], 
+                            module_name: Optional[str] = None, 
+                            profile: bool = False) -> Optional[Path]:
+        """
+        Compila uno o più file C++ in un modulo Python (.pyd/.so) usando PyBind11.
+        Non esegue il file, ma ritorna il percorso del modulo compilato.
+        
+        Args:
+            src_files: File sorgente C++ (o lista)
+            module_name: Nome del modulo (es. 'mio_modulo'). Se None, usa il nome del primo file.
+            profile: (Non usato per PyBind, ma mantenuto per coerenza)
+            
+        Returns:
+            Path al modulo compilato se successo, None altrimenti.
+        """
+        if not PYBIND11_AVAILABLE:
+            print("❌ Errore: PyBind11 non è installato nel venv/sistema.")
+            print("   Esegui: pip install pybind11")
+            return None
+
+        if isinstance(src_files, str):
+            src_files = [src_files]
+        
+        src_paths = [Path(f).resolve() for f in src_files]
+        
+        for src_path in src_paths:
+            if not src_path.exists():
+                print(f"❌ File sorgente non trovato: {src_path}")
+                return None
+        
+        # Determina il nome del modulo
+        if module_name is None:
+            module_name = src_paths[0].stem
+        
+        # Determina il nome completo del file (es. 'mio_modulo.cp310-win_amd64.pyd')
+        ext_suffix = self._get_ext_suffix()
+        
+        # Pulisci il nome (a volte .pyd o .so è già in ext_suffix, ma di solito no)
+        # ext_suffix è tipo ".cp310-win_amd64.pyd" o ".cpython-310-x86_64-linux-gnu.so"
+        if ext_suffix.startswith(f".{module_name}"):
+             module_filename = ext_suffix[1:]
+        else:
+             module_filename = module_name + ext_suffix
+        
+        module_path = src_paths[0].parent / module_filename
+
+        # Controlla la cache
+        if self._is_cached(src_paths, module_filename):
+            if self.verbose:
+                print(f"⚡ Modulo PyBind11 [cache]: {module_path.name}")
+            return module_path
+
+        # Compila
+        with self._work_in_directory(src_paths[0].parent):
+            file_names = ", ".join([p.name for p in src_paths])
+            print(f"[PyBind11] Compilazione: {file_names} → {module_filename}")
+            
+            build_cmd = self._get_pybind_build_command(src_paths, module_filename)
+            if not build_cmd:
+                return None
+
+            ret_code, stdout, stderr = self._run_command(build_cmd)
+            if stdout: print(stdout)
+
+            if ret_code != 0:
+                print(f"❌ Compilazione PyBind11 fallita.")
+                if stderr: print(f"ERRORE:\n{stderr}")
+                return None
+            
+            print(f"✅ Compilazione PyBind11 riuscita: {module_path.name}")
+            print(f"   Puoi importarlo con: import {module_name}")
+            
+            # Aggiorna la cache
+            self._update_cache(src_paths, module_path) 
+            return module_path
+
+    def _get_pybind_build_command(self, src_paths: List[Path], module_filename: str) -> Optional[str]:
+        """Costruisce il comando di compilazione PyBind11."""
+        try:
+            # Percorso include Python (es. .../include/python3.10)
+            py_include = self._get_py_include()
+            # Stringa di flag include PyBind11 (es. "-I.../site-packages/pybind11/include")
+            pb_includes_str = self._get_pybind_include()
+        except Exception as e:
+            print(f"❌ Errore nel trovare gli include di Python/PyBind11: {e}")
+            return None
+
+        src_files = " ".join([f'"{p.name}"' for p in src_paths])
+        
+        if self.system == "Windows":
+            try:
+                vcvars_path = self._find_vcvars64()
+                # Converte i flag GCC (-I) in flag MSVC (/I)
+                msvc_includes = f'/I"{py_include}" {pb_includes_str.replace("-I", "/I")}'
+                
+                # /Fe<file> specifica il nome output per una DLL quando /LD è usato
+                return (f'call "{vcvars_path}" && cl {self.MSVC_PYBIND_FLAGS} {msvc_includes} '
+                        f'{src_files} /Fe"{module_filename}"')
+            except FileNotFoundError as e:
+                print(f"❌ {e}")
+                return None
+        else:
+            # GCC/Clang
+            # pb_includes_str è già formattato correttamente (es. "-Ipath1 -Ipath2")
+            include_flags = f'-I"{py_include}" {pb_includes_str}'
+            
+            return (f'g++ {self.GCC_PYBIND_FLAGS} {include_flags} '
+                    f'{src_files} -o "{module_filename}"')
 
     # ===== METODI DI COMPILAZIONE JAVA (MULTI-FILE) =====
     
@@ -705,11 +848,11 @@ class UniversalBuilder:
         tools = {}
         
         tools['Python'] = f"✅ Disponibile (Versione: {sys.version.split()[0]})"
-        try:
-            subprocess.check_output([sys.executable, '-m', 'pybind11', '--version'], 
-                                    stderr=subprocess.STDOUT)
+        
+        # MODIFICATO: Controlla la variabile globale
+        if PYBIND11_AVAILABLE:
             tools['PyBind11'] = "✅ Disponibile"
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        else:
             tools['PyBind11'] = "❌ Non disponibile (esegui: pip install pybind11)"
             
         if platform.system() == "Windows":
@@ -720,25 +863,25 @@ class UniversalBuilder:
                 tools['MSVC (C++)'] = "❌ Non disponibile (Installa Visual Studio Build Tools)"
         else:
             ret = subprocess.run("g++ --version", shell=True, 
-                               capture_output=True).returncode
+                                 capture_output=True).returncode
             tools['g++ (C++)'] = "✅ Disponibile" if ret == 0 else "❌ Non disponibile"
 
         ret = subprocess.run("javac -version", shell=True, 
-                            capture_output=True)
+                             capture_output=True)
         if ret.returncode == 0:
             tools['Java'] = f"✅ Disponibile"
         else:
             tools['Java'] = "❌ Non disponibile (Installa un JDK)"
 
         ret = subprocess.run("rustc --version", shell=True, 
-                            capture_output=True, text=True)
+                             capture_output=True, text=True)
         if ret.returncode == 0:
             tools['Rust (rustc)'] = f"✅ Disponibile ({ret.stdout.strip()})"
         else:
             tools['Rust (rustc)'] = "❌ Non disponibile (vedi: https://rustup.rs)"
         
         ret = subprocess.run("cargo --version", shell=True, 
-                            capture_output=True, text=True)
+                             capture_output=True, text=True)
         if ret.returncode == 0:
             tools['Cargo'] = f"✅ Disponibile ({ret.stdout.strip()})"
         else:
@@ -805,9 +948,9 @@ class UniversalBuilder:
 # --- Esempi d'uso ---
 if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║     UniversalBuilder - Multi-Language Compiler             ║")
-    print("║  CON PARALLELIZZAZIONE NATIVA (concurrent.futures)        ║")
-    print("║        VERSIONE 2.2 - build_from_file MIGLIORATO          ║")
+    print("║     UniversalBuilder - Multi-Language Compiler           ║")
+    print("║ CON PARALLELIZZAZIONE NATIVA (concurrent.futures)        ║")
+    print("║     VERSIONE 2.3 - INTEGRAZIONE PyBind11                 ║")
     print("╚════════════════════════════════════════════════════════════╝")
     
     # Builder con parallelizzazione abilitata (default)
@@ -816,6 +959,11 @@ if __name__ == '__main__':
         cache_enabled=True,
         parallel_enabled=True
     )
+    
+    print("\n" + "="*60)
+    print("VERIFICA TOOLCHAIN")
+    print("="*60)
+    builder.check_toolchain() # NUOVO: Esegui il check all'avvio
     
     print("\n" + "="*60)
     print("INFO PARALLELIZZAZIONE")
@@ -827,8 +975,15 @@ if __name__ == '__main__':
     print(f"CPU del sistema: {parallel_info['cpu_count']}")
     print(f"Tipo executor: {parallel_info['executor_type']}")
     
-    print("\n✅ Builder pronto per compilazione parallela!")
+    print("\n✅ Builder pronto!")
     print("Usa:")
-    print("  - builder.build_and_run_mixed(files, parallel=True)")
-    print("  - builder.build_from_file('file.cpp')  # File singolo")
-    print("  - builder.build_from_file(['main.cpp', 'utils.cpp'])  # Lista di file")
+    print("  --- Eseguibili ---")
+    print("  - builder.build_from_file('file.cpp')")
+    print("  - builder.build_from_file(['main.cpp', 'utils.cpp'])")
+    print("  - builder.build_from_file('programma.java')")
+    print("  - builder.build_from_file('script.rs')")
+    print("  - builder.build_from_file('script.py')")
+    print("\n  --- Moduli PyBind11 (NUOVO) ---")
+    print("  - builder.build_from_file('mio_modulo.cpp', pybind=True)")
+    print("  - builder.build_from_file('mio_modulo.cpp', pybind=True, module_name='custom_name')")
+    print("  (Questo compila il modulo. Dovrai poi importarlo nel tuo script Python)")
