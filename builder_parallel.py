@@ -8,7 +8,7 @@ import time
 import glob
 import zipfile
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Union
+from typing import Optional, Tuple, List, Dict, Union, Callable
 from contextlib import contextmanager
 from datetime import datetime
 from collections import defaultdict
@@ -35,7 +35,7 @@ class UniversalBuilder:
     PyBind11, PyO3 e JAR con supporto drag-and-drop, caching intelligente, 
     profiling, multi-file e PARALLELIZZAZIONE NATIVA.
 
-    VERSIONE: 2.6 - CORREZIONE BUG Concorrenza (os.chdir)
+    VERSIONE: 2.7 - REFACTORING (DRY)
     """
     # Configurazione esplicita dei flag del compilatore
     MSVC_CPP_FLAGS = "/O2 /MD /std:c++14 /EHsc"
@@ -187,14 +187,6 @@ class UniversalBuilder:
 
         return False
 
-    def _run_cached(self, exe_path: Path) -> Tuple[int, str, str]:
-        """Esegue un eseguibile cached."""
-        if self.verbose:
-            print(f"⚡ Usando versione cached: {exe_path.name}")
-
-        run_cmd = f"./{exe_path.name}" if self.system != "Windows" else f".\\{exe_path.name}"
-        return self._run_command(run_cmd, cwd=exe_path.parent)
-
     def _update_cache(self, file_paths: List[Path], exe_path: Path):
         """Aggiorna l'indice cache."""
         if not self.cache_enabled:
@@ -247,6 +239,70 @@ class UniversalBuilder:
             return 1, "", "Timeout: il comando ha impiegato più di 5 minuti."
         except Exception as e:
             return 1, "", f"Errore imprevisto durante l'esecuzione: {str(e)}"
+
+    # ===== NUOVI METODI HELPER PER REFACTORING (DRY) =====
+
+    def _execute_and_print(self, run_cmd: str, cwd: Path) -> bool:
+        """
+        [HELPER] Esegue un comando, stampa il suo output formattato 
+        e restituisce True/False.
+        """
+        ret_code, stdout, stderr = self._run_command(run_cmd, cwd=cwd)
+
+        print("--- OUTPUT ESECUZIONE ---")
+        if stdout:
+            print(stdout.strip())
+        if stderr:
+            print(f"ERRORE ESECUZIONE:\n{stderr.strip()}")
+        print("-------------------------")
+        return ret_code == 0
+
+    def _get_or_build_artifact(self, 
+                               src_paths: List[Path], 
+                               artifact_name: str, 
+                               build_command_generator: Callable[[List[Path], str], Optional[str]],
+                               build_cwd: Path) -> Optional[Path]:
+        """
+        [HELPER] Metodo orchestratore che gestisce cache e compilazione.
+        Restituisce il percorso dell'artefatto (da cache o compilato).
+        """
+        
+        artifact_path = build_cwd / artifact_name
+
+        # 1. Logica Cache
+        if self._is_cached(src_paths, artifact_name):
+            if self.verbose:
+                print(f"⚡ Artefatto [cache]: {artifact_path.name}")
+            return artifact_path
+
+        # 2. Logica di Build (non in cache)
+        if self.verbose:
+            file_names = ", ".join([p.name for p in src_paths])
+            print(f"🔩 Compilazione: {file_names} → {artifact_name}")
+            
+        build_cmd = build_command_generator(src_paths, artifact_name)
+        
+        if not build_cmd:
+             print(f"❌ Impossibile generare il comando di build per {
+                   artifact_name}.")
+             return None
+
+        ret_code, stdout, stderr = self._run_command(build_cmd, cwd=build_cwd)
+        
+        if stdout:
+            print(stdout)
+        if ret_code != 0:
+            print(f"❌ Compilazione fallita.")
+            if stderr:
+                print(f"ERRORE:\n{stderr}")
+            return None
+
+        # 3. Successo e aggiornamento cache
+        print(f"✅ Compilazione riuscita: {artifact_name}")
+        self._update_cache(src_paths, artifact_path)
+        return artifact_path
+
+    # ======================================================
 
     def _get_py_include(self) -> str:
         """Ottiene il percorso di include di Python."""
@@ -485,9 +541,8 @@ class UniversalBuilder:
             print(f"❌ Tipo di file non supportato: {suffix}")
             return False
 
-    # ===== METODI DI COMPILAZIONE C++ (MULTI-FILE) =====
+    # ===== METODI DI COMPILAZIONE C++ (REFACTOR) =====
 
-    # <--- FIX 1 (Concurrency): Rimosso _work_in_directory, aggiunto cwd
     def build_and_run_cpp(self, src_files: Union[str, List[str]], exe_name: Optional[str] = None,
                           profile: bool = False) -> bool:
         """Compila ed esegue uno o più file C++ (come ESEGUIBILE)."""
@@ -503,59 +558,28 @@ class UniversalBuilder:
             exe_name = src_paths[0].stem + \
                 (".exe" if self.system == "Windows" else "")
         
-        exe_path = src_paths[0].parent / exe_name
-        
-        # <--- FIX 1 (Concurrency): Definisci CWD
         build_cwd = src_paths[0].parent
 
-        if self._is_cached(src_paths, exe_name):
-            ret_code, stdout, stderr = self._run_cached(exe_path)
-            if stdout:
-                print(stdout.strip())
-            return ret_code == 0
+        # 1. Ottieni o compila l'artefatto (questo gestisce la cache)
+        exe_path = self._get_or_build_artifact(
+            src_paths,
+            exe_name,
+            self._get_cpp_build_command,  # Passa il metodo helper
+            build_cwd
+        )
 
-        # Rimosso: with self._work_in_directory(src_paths[0].parent):
-        file_names = ", ".join([p.name for p in src_paths])
-        print(f"[C++] Compilazione: {file_names} → {exe_name}")
+        if exe_path is None:
+            return False # Compilazione fallita
 
-        # <--- FIX 1 (Concurrency): Passa CWD
-        if not self._compile_cpp_files(src_paths, exe_name, cwd=build_cwd):
-            return False
-        
-        print(f"✅ Compilazione riuscita. Esecuzione di '{exe_name}'...")
-        self._update_cache(src_paths, exe_path)
-
+        # 2. Esegui l'artefatto
+        print(f"✅ Esecuzione di '{exe_name}'...")
         run_cmd = f".\\{
             exe_name}" if self.system == "Windows" else f"./{exe_name}"
         
-        # <--- FIX 1 (Concurrency): Passa CWD
-        ret_code, stdout, stderr = self._run_command(run_cmd, cwd=build_cwd)
+        return self._execute_and_print(run_cmd, cwd=build_cwd)
 
-        print("--- OUTPUT ESECUZIONE ---")
-        if stdout:
-            print(stdout.strip())
-        if stderr:
-            print(f"ERRORE ESECUZIONE:\n{stderr.strip()}")
-        print("-------------------------")
-        return ret_code == 0
-
-    # <--- FIX 1 (Concurrency): Accetta CWD
-    def _compile_cpp_files(self, src_paths: List[Path], exe_name: str, cwd: Path) -> bool:
-        """Compila i file C++ (metodo helper)."""
-        build_cmd = self._get_cpp_build_command(src_paths, exe_name)
-        if not build_cmd:
-            return False
-        # <--- FIX 1 (Concurrency): Passa CWD
-        ret_code, stdout, stderr = self._run_command(build_cmd, cwd=cwd)
-        if stdout:
-            print(stdout)
-        if ret_code != 0:
-            print(f"❌ Compilazione fallita.")
-            if stderr:
-                print(f"ERRORE:\n{stderr}")
-            return False
-        return True
-
+    # <--- _compile_cpp_files ORA È OBSOLETO (logica in _get_or_build_artifact)
+    
     def _get_cpp_build_command(self, src_paths: List[Path], exe_name: str) -> Optional[str]:
         """Costruisce il comando di compilazione C++ per la piattaforma corrente."""
         src_files = " ".join([f'"{p.name}"' for p in src_paths])
@@ -569,7 +593,7 @@ class UniversalBuilder:
         else:
             return f'g++ {self.GCC_CPP_FLAGS} {src_files} -o "{exe_name}"'
 
-    # ===== METODI DI COMPILAZIONE PYBIND11 =====
+    # ===== METODI DI COMPILAZIONE PYBIND11 (REFACTOR) =====
 
     def build_pybind_module(self, src_files: Union[str, List[str]],
                             module_name: Optional[str] = None,
@@ -599,39 +623,20 @@ class UniversalBuilder:
              module_filename = ext_suffix[1:]
         else:
             module_filename = module_name + ext_suffix
-
-        module_path = src_paths[0].parent / module_filename
         
-        # Definisci CWD
         build_cwd = src_paths[0].parent
 
-        if self._is_cached(src_paths, module_filename):
-            if self.verbose:
-                print(f"⚡ Modulo PyBind11 [cache]: {module_path.name}")
-            return module_path
+        # 1. Ottieni o compila l'artefatto
+        module_path = self._get_or_build_artifact(
+            src_paths,
+            module_filename,
+            self._get_pybind_build_command, # Passa il metodo helper
+            build_cwd
+        )
 
-        # Rimosso: with self._work_in_directory(src_paths[0].parent):
-        file_names = ", ".join([p.name for p in src_paths])
-        print(f"[PyBind11] Compilazione: {file_names} → {module_filename}")
-
-        build_cmd = self._get_pybind_build_command(
-            src_paths, module_filename)
-        if not build_cmd:
-            return None
-
-        # Passa CWD
-        ret_code, stdout, stderr = self._run_command(build_cmd, cwd=build_cwd)
-        if stdout:
-            print(stdout)
-        if ret_code != 0:
-            print(f"❌ Compilazione PyBind11 fallita.")
-            if stderr:
-                print(f"ERRORE:\n{stderr}")
-            return None
-
-        print(f"✅ Compilazione PyBind11 riuscita: {module_path.name}")
-        print(f"   Puoi importarlo con: import {module_name}")
-        self._update_cache(src_paths, module_path)
+        if module_path:
+            print(f"   Puoi importarlo con: import {module_name}")
+            
         return module_path
 
     def _get_pybind_build_command(self, src_paths: List[Path], module_filename: str) -> Optional[str]:
@@ -659,14 +664,14 @@ class UniversalBuilder:
             return (f'g++ {self.GCC_PYBIND_FLAGS} {include_flags} '
                     f'{src_files} -o "{module_filename}"')
 
-    # ===== NUOVO: METODI DI COMPILAZIONE PYO3 (RUST) =====
+    # ===== NUOVO: METODI DI COMPILAZIONE PYO3 (RUST) (NO REFACTOR) =====
 
     def build_pyo3_module(self, src_files: Union[str, List[str]],
                           module_name: Optional[str] = None,
                           profile: bool = False) -> Optional[Path]:
         """
         Compila un progetto Rust (Cargo) in un modulo Python (.pyd/.so) usando PyO3/Maturin.
-        Richiede 'maturin' installato e un 'Cargo.toml' valido.
+        (Logica di build multi-step personalizzata, non usa _get_or_build_artifact)
         """
         if not self.MATURIN_AVAILABLE:
             print("❌ Errore: 'maturin' non è installato nel venv/sistema.")
@@ -706,13 +711,11 @@ class UniversalBuilder:
         wheel_dir = project_dir / "target" / "wheels"
         opt_flag = "--release" if profile else ""
 
-        # Rimosso: with self._work_in_directory(project_dir):
         print(f"[PyO3/Maturin] Compilazione progetto in: {project_dir.name}")
         
         build_cmd = (f'"{self.python_interpreter}" -m maturin build {opt_flag} '
                      f'--out "{wheel_dir}"')
 
-        # Passa CWD
         ret_code, stdout, stderr = self._run_command(build_cmd, cwd=project_dir)
         if stdout:
             print(stdout)
@@ -746,9 +749,8 @@ class UniversalBuilder:
             print(f"❌ Errore durante l'estrazione della wheel: {e}")
             return None
 
-    # ===== METODI DI COMPILAZIONE JAVA (MULTI-FILE) =====
+    # ===== METODI DI COMPILAZIONE JAVA (REFACTOR PARZIALE) =====
 
-    # <--- FIX 1 (Concurrency): Rimosso _work_in_directory, aggiunto cwd
     def build_and_run_java(self, src_files: Union[str, List[str]], profile: bool = False) -> bool:
         """Compila ed esegue uno o più file sorgente Java (come ESEGUIBILE)."""
         if isinstance(src_files, str):
@@ -761,35 +763,23 @@ class UniversalBuilder:
 
         main_file = src_paths[0]
         classname = main_file.stem 
-        
-        # <--- FIX 1 (Concurrency): Definisci CWD
         build_cwd = main_file.parent
 
-        # Rimosso: with self._work_in_directory(main_file.parent):
         file_names = ", ".join([p.name for p in src_paths])
         print(f"[Java] Compilazione: {file_names}")
 
-        # <--- FIX 1 (Concurrency): Passa CWD
+        # 1. Compila (logica personalizzata, non usa _get_or_build_artifact)
         if not self._compile_java_files(src_paths, cwd=build_cwd):
             return False
         print("✅ Compilazione riuscita. Esecuzione...")
 
-        # <--- FIX 1 (Concurrency): Passa CWD
-        ret_code, stdout, stderr = self._run_command(f"java {classname}", cwd=build_cwd)
+        # 2. Esegui (usa il nuovo helper _execute_and_print)
+        run_cmd = f"java {classname}"
+        return self._execute_and_print(run_cmd, cwd=build_cwd)
 
-        print("--- OUTPUT ESECUZIONE ---")
-        if stdout:
-            print(stdout.strip())
-        if stderr:
-            print(f"ERRORE ESECUZIONE:\n{stderr.strip()}")
-        print("-------------------------")
-        return ret_code == 0
-
-    # <--- FIX 1 (Concurrency): Accetta CWD
     def _compile_java_files(self, src_paths: List[Path], cwd: Path) -> bool:
         """Compila i file Java (metodo helper)."""
         src_files = " ".join([f'"{p.name}"' for p in src_paths])
-        # <--- FIX 1 (Concurrency): Passa CWD
         ret_code, _, stderr = self._run_command(f"javac {src_files}", cwd=cwd)
         if ret_code != 0:
             print(f"❌ Compilazione fallita.")
@@ -798,14 +788,14 @@ class UniversalBuilder:
             return False
         return True
 
-    # ===== NUOVO: METODO DI COMPILAZIONE JAVA JAR (LIBRERIA) =====
+    # ===== NUOVO: METODO COMPILAZIONE JAVA JAR (NO REFACTOR) =====
 
     def build_java_jar(self, src_files: Union[str, List[str]], 
                          jar_name: Optional[str] = None, 
                          profile: bool = False) -> Optional[Path]:
         """
         Compila uno o più file .java e li impacchetta in un file .jar.
-        Questo è l'equivalente di un "modulo" per JPype.
+        (Logica di build multi-step personalizzata, non usa _get_or_build_artifact)
         """
         if isinstance(src_files, str):
             src_files = [src_files]
@@ -821,8 +811,6 @@ class UniversalBuilder:
             jar_name = main_file.stem + ".jar"
             
         jar_path = main_file.parent / jar_name
-        
-        # Definisci CWD
         build_cwd = main_file.parent
 
         if self._is_cached(src_paths, jar_name):
@@ -830,7 +818,6 @@ class UniversalBuilder:
                 print(f"⚡ Libreria JAR [cache]: {jar_path.name}")
             return jar_path
 
-        # Rimosso: with self._work_in_directory(main_file.parent):
         file_names = ", ".join([p.name for p in src_paths])
         print(f"[Java JAR] Compilazione: {file_names}")
 
@@ -839,14 +826,12 @@ class UniversalBuilder:
             return None # Compilazione fallita
 
         # 2. Trova tutti i file .class generati
-        # Corretto per usare build_cwd invece di Path.cwd()
         class_files = list(build_cwd.glob("*.class"))
         
         if not class_files:
             print("❌ Errore: Nessun file .class trovato dopo la compilazione.")
             return None
 
-        # Rendi i nomi dei file .class relativi al CWD
         class_names = " ".join([f'"{f.name}"' for f in class_files])
         
         # 3. Costruisci il comando 'jar'
@@ -875,9 +860,8 @@ class UniversalBuilder:
             
         return jar_path
 
-    # ===== METODI DI COMPILAZIONE RUST (ESEGUIBILE) =====
+    # ===== METODI DI COMPILAZIONE RUST (ESEGUIBILE) (REFACTOR) =====
 
-    # <--- FIX 1 (Concurrency): Rimosso _work_in_directory, aggiunto cwd
     def build_and_run_rust(self, src_file: str, exe_name: Optional[str] = None,
                            optimization: str = "release", profile: bool = False) -> bool:
         """Compila ed esegue un file sorgente Rust (.rs) (come ESEGUIBILE)."""
@@ -890,54 +874,38 @@ class UniversalBuilder:
             exe_name = src_path.stem + \
                 (".exe" if self.system == "Windows" else "")
 
-        exe_path = src_path.parent / exe_name
-        
-        # <--- FIX 1 (Concurrency): Definisci CWD
         build_cwd = src_path.parent
 
-        if self._is_cached([src_path], exe_name):
-            ret_code, stdout, stderr = self._run_cached(exe_path)
-            if stdout:
-                print(stdout.strip())
-            return ret_code == 0
-
-        # Rimosso: with self._work_in_directory(src_path.parent):
-        print(f"[Rust] Compilazione: {src_path.name} → {exe_name}")
-
+        # Definisci il generatore di comandi per rustc
         if optimization == "release":
             opt_flags = "-C opt-level=3"
         else:
             opt_flags = "" # Debug (default)
+        
+        # Usa una lambda per passare il comando di build all'orchestratore
+        # Nota: src_paths[0] perché rustc qui gestisce un file alla volta
+        build_cmd_generator = lambda src_paths, name: (
+            f'rustc {opt_flags} "{src_paths[0].name}" -o "{name}"'
+        )
 
-        build_cmd = f'rustc {opt_flags} "{src_path.name}" -o "{exe_name}"'
+        # 1. Ottieni o compila l'artefatto
+        exe_path = self._get_or_build_artifact(
+            [src_path], # _get_or_build_artifact si aspetta una lista
+            exe_name,
+            build_cmd_generator,
+            build_cwd
+        )
 
-        # <--- FIX 1 (Concurrency): Passa CWD
-        ret_code, stdout, stderr = self._run_command(build_cmd, cwd=build_cwd)
-        if stdout:
-            print(stdout)
-        if ret_code != 0:
-            print(f"❌ Compilazione fallita.")
-            if stderr:
-                print(f"ERRORE:\n{stderr}")
+        if exe_path is None:
             return False
 
-        print(f"✅ Compilazione riuscita. Esecuzione di '{exe_name}'...")
-        
-        self._update_cache([src_path], exe_path)
-
+        # 2. Esegui l'artefatto
+        print(f"✅ Esecuzione di '{exe_name}'...")
         run_cmd = f".\\{
             exe_name}" if self.system == "Windows" else f"./{exe_name}"
         
-        # <--- FIX 1 (Concurrency): Passa CWD
-        ret_code, stdout, stderr = self._run_command(run_cmd, cwd=build_cwd)
+        return self._execute_and_print(run_cmd, cwd=build_cwd)
 
-        print("--- OUTPUT ESECUZIONE ---")
-        if stdout:
-            print(stdout.strip())
-        if stderr:
-            print(f"ERRORE ESECUZIONE:\n{stderr.strip()}")
-        print("-------------------------")
-        return ret_code == 0
 
     def build_rust_project(self, project_dir: str = ".",
                            optimization: str = "release", profile: bool = False) -> bool:
@@ -952,7 +920,6 @@ class UniversalBuilder:
         opt_flag = "--release" if optimization == "release" else ""
         build_cmd = f"cargo build {opt_flag}"
 
-        # Passa CWD
         ret_code, stdout, stderr = self._run_command(build_cmd, cwd=project_path)
         if stdout:
             print(stdout)
@@ -965,7 +932,7 @@ class UniversalBuilder:
         print("✅ Compilazione riuscita!")
         return True
 
-    # ===== METODI PER PYTHON =====
+    # ===== METODI PER PYTHON (REFACTOR) =====
 
     def build_and_run_python(self, py_files: Union[str, List[str]], profile: bool = False) -> bool:
         """Esegue uno o più script Python usando il Python interpreter configurato."""
@@ -978,27 +945,16 @@ class UniversalBuilder:
                 return False
 
         main_file = py_paths[0]
-        
-        # Definisci CWD
         build_cwd = main_file.parent
 
-        # Rimosso: with self._work_in_directory(main_file.parent):
         file_names = ", ".join([p.name for p in py_paths])
         print(f"[Python] Esecuzione: {file_names}")
         print(f"   Interpreter: {self.python_interpreter}")
 
         run_cmd = f'"{self.python_interpreter}" "{main_file.name}"'
         
-        # Passa CWD
-        ret_code, stdout, stderr = self._run_command(run_cmd, cwd=build_cwd)
-
-        print("--- OUTPUT ESECUZIONE ---")
-        if stdout:
-            print(stdout.strip())
-        if stderr:
-            print(f"ERRORE ESECUZIONE:\n{stderr.strip()}")
-        print("-------------------------")
-        return ret_code == 0
+        # Usa l'helper per l'esecuzione e la stampa
+        return self._execute_and_print(run_cmd, cwd=build_cwd)
 
     # ===== FUNZIONI DI UTILITÀ =====
 
@@ -1141,7 +1097,7 @@ if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
     print("║     UniversalBuilder - Multi-Language Compiler           ║")
     print("║ CON PARALLELIZZAZIONE NATIVA (concurrent.futures)        ║")
-    print("║     VERSIONE 2.6 - CORREZIONE BUG (Concurrency)          ║")
+    print("║         VERSIONE 2.7 - REFACTORING (DRY)                 ║")
     print("╚════════════════════════════════════════════════════════════╝")
 
     builder = UniversalBuilder(
